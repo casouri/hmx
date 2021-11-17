@@ -1,0 +1,42 @@
+name:                hmx
+version:             0.1.0.0
+github:              "githubuser/proj"
+license:             BSD3
+author:              "Author name here"
+maintainer:          "example@example.com"
+copyright:           "2021 Author name here"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+description:         hmx
+
+dependencies:
+- base >= 4.7 && < 5
+- brick
+- vty
+- regex-compat
+- containers
+- parsec
+- mtl
+- transformers
+
+library:
+  source-dirs: src
+
+executables:
+  proj-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    # - -rtsopts
+    # - -with-rtsopts=-N
+    dependencies:
+    - hmx
+    
