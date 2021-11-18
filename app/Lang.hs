@@ -9,7 +9,7 @@ import Debug.Trace (trace)
 import Control.Monad.Except
 import System.IO
 
-data Expression 
+data Expression
    = ExprSymbol Symbol
    | ExprInt Int
    | ExprString String
@@ -21,10 +21,14 @@ type Symbol = String
 
 type Obarray = [M.Map Symbol Expression]
 
+type Buffer = (String, Int)
+
+type World = (Buffer, Obarray)
+
 type Error = (Expression, String)
 
 type StateExcept e s a = StateT s (Except e) a
-type ExpressionS = StateExcept (Expression, String) Obarray Expression
+type ExpressionS = StateExcept (Expression, String) World Expression
 
 -- Print
 
@@ -39,7 +43,7 @@ prin1 (ExprList lst) = "(" ++ unwords (map prin1 lst) ++ ")"
 -- Obarray
 
 nil :: Expression
-nil = ExprBool False
+nil = ExprList []
 
 olookup :: Symbol -> Obarray -> ExpressionS
 olookup sym [] = undefined
@@ -55,20 +59,25 @@ oset _ _ [] = undefined
 oset sym val [frame] = [M.alter (\x-> Just val) sym frame]
 oset sym val (this : rest) =
   case M.lookup sym this of
-    Nothing -> oset sym val rest
+    Nothing -> this : oset sym val rest
     Just _ -> M.adjust (const val) sym this : rest
 
-initialObarray :: Obarray
-initialObarray = [M.empty]
+initialWorld :: World
+initialWorld = (("", 0), [M.empty])
+
+--- Error
 
 throwCurrentForm :: String -> ExpressionS
-throwCurrentForm msg = do obarray <- get
+throwCurrentForm msg = do (buf, obarray) <- get
                           form <- olookup "__current-form" obarray
                           throwError (form, msg)
 
 genericError :: ExpressionS
 genericError = throwCurrentForm "Malformed expression"
 
+
+--- Primitive bop
+  
 primAdd (ExprInt a) (ExprInt b) = return $ ExprInt (a + b)
 primAdd _ _ = genericError
 primSub (ExprInt a) (ExprInt b) = return $ ExprInt (a - b)
@@ -78,8 +87,7 @@ primMul _ _ = genericError
 primDiv (ExprInt a) (ExprInt 0) = throwCurrentForm "Division by zero"
 primDiv (ExprInt a) (ExprInt b) = return $ ExprInt (div a b)
 primDiv _ _ = genericError
-primEq (ExprInt a) (ExprInt b) = return $ ExprBool (a == b)
-primEq _ _ = genericError
+primEq a b = return $ ExprBool (a == b)
 primGt (ExprInt a) (ExprInt b) = return $ ExprBool (a > b)
 primGt _ _ = genericError
 primLt (ExprInt a) (ExprInt b) = return $ ExprBool (a < b)
@@ -110,7 +118,19 @@ bopPrimitives = M.fromList [("+", primAdd),
                             ("or", primOr)]
 
 primitives :: [Symbol]
-primitives = ["if", "let", "set", "not", "progn"] ++ M.keys bopPrimitives
+primitives = ["if", "let", "setq", "not", "progn",
+              "car", "cdr", "list", "quote", "insert", "delete",
+              "goto", "point", "buffer-string"]
+             ++ M.keys bopPrimitives
+
+
+--- Buffer
+  
+insert :: String -> Int -> String -> String
+insert body pos txt = take pos body ++ txt ++ drop pos body
+
+delete :: String -> Int -> Int -> String
+delete body pos len = take (pos-len) body ++ drop pos body
 
 --- Parse
 
@@ -118,7 +138,9 @@ intP :: Parser Expression
 intP = fmap (ExprInt . read) (spaces >> many1 digit)
 
 symbolP :: Parser Expression
-symbolP = fmap ExprSymbol (spaces >> many1 (noneOf "\"() "))
+symbolP = fmap ExprSymbol (spaces >> many1
+                           (letter <|> digit
+                            <|> oneOf "!@#$%^&*_+-=<>?/|~`"))
 
 stringP :: Parser Expression
 stringP = do spaces
@@ -126,42 +148,49 @@ stringP = do spaces
              str <- many1 (noneOf "\"")
              char '"'
              return $ ExprString str
-  
+
 boolP :: Parser Expression
 boolP = try (spaces >> string "true" >> return (ExprBool True))
         <|> (spaces >> string "false" >> return (ExprBool False))
 
-exprP :: Parser Expression
-exprP   = try intP
-          <|> try boolP
-          <|> try symbolP
-          <|> try stringP
-          <|> do spaces
-                 char '('
-                 stuff <- try multiExprP <|> return []
-                 spaces
-                 char ')'
-                 return $ ExprList stuff
+qexprP = do spaces
+            char '\''
+            exp <- exprP'
+            return $ ExprList [ExprSymbol "quote", exp]
+
+exprP' :: Parser Expression
+exprP' = try intP
+         <|> try boolP
+         <|> try symbolP
+         <|> try stringP
+         <|> try qexprP
+         <|> do spaces
+                char '('
+                stuff <- try multiExprP <|> return []
+                spaces
+                char ')'
+                return $ ExprList stuff
+
+exprP = do exp <- exprP'
+           spaces
+           return exp
 
 multiExprP :: Parser [Expression]
 multiExprP = many1 exprP
 
-parseString :: Parser a -> String -> Either ParseError a 
-parseString p s = runParser p () "REPL" s 
-
-parseFile :: FilePath -> IO (Either ParseError [Expression])
-parseFile f = parseFromFile multiExprP f
+parseString :: Parser a -> String -> Either ParseError a
+parseString p s = runParser p () "REPL" s
 
 --- Eval
 
 evalExpr :: Expression -> ExpressionS
-                                 
+
 evalExpr v@(ExprList []) = return v
 evalExpr v@(ExprList ((ExprSymbol "lambda") : _)) = return v
 evalExpr v@(ExprList (fn : args)) =
   do fn <- evalExpr fn
-     obarray <- get
-     put $ oset "__current-form" v obarray
+     (buf, obarray) <- get
+     put (buf, oset "__current-form" v obarray)
      evalList fn args
 evalExpr v@(ExprInt _) = return v
 evalExpr v@(ExprBool _) = return v
@@ -169,53 +198,115 @@ evalExpr v@(ExprString _) = return v
 evalExpr v@(ExprSymbol sym) =
   if elem sym primitives
   then return v
-  else do obarray <- get
+  else do (buf, obarray) <- get
           olookup sym obarray
 
 evalMultiExpr :: [Expression] -> ExpressionS
-evalMultiExpr [] = return $ ExprInt 0
-evalMultiExpr [expr] = evalExpr expr
-evalMultiExpr (x:xs) = evalExpr x >> evalMultiExpr xs
+evalMultiExpr exprs = fmap last (mapM evalExpr exprs)
 
 evalList :: Expression -> [Expression] -> ExpressionS
 
-bindingToList :: Expression -> Maybe [(Symbol, Expression)]
-bindingToList (ExprList lst) = mapM toTuple lst where
-  toTuple (ExprList [ExprSymbol sym, val]) = Just (sym, val)
-  toTuple exp = Nothing
-bindingToList _ = Nothing
-
-evalList (ExprSymbol "let") (bindings : body) =
-  do obarray <- get
-     case bindingToList bindings of
-       Nothing -> throwError (bindings, "Malformed bindings form")
-       Just bds -> put $ M.fromList bds : obarray
+evalList (ExprSymbol "let") ((ExprList bindings) : body) =
+  do (buf, obarray) <- get
+     bds <- let bindingToList (ExprList [ExprSymbol sym, val]) =
+                  do val <- evalExpr val
+                     return (sym, val)
+                bindingToList v = throwError (v, "Invalid binding") in
+              fmap M.fromList $ mapM bindingToList bindings
+     put (buf, (trace (show bds) bds) : obarray)
      val <- evalMultiExpr body
-     obarray <- get
-     put $ tail obarray
+     (buf, obarray) <- get
+     put (buf, tail obarray)
      return val
-evalList (ExprSymbol "let") _ = genericError
 
 evalList (ExprSymbol "if") [condition, caseThen, caseElse] =
   do result <- evalExpr condition
-     if result == ExprBool True
-       then evalExpr caseThen
-       else evalExpr caseElse
-evalList (ExprSymbol "if") _ = genericError       
+     if result == ExprBool False
+       then evalExpr caseElse
+       else evalExpr caseThen
 
-evalList (ExprSymbol "set") [ExprSymbol sym, val] =
-  do obarray <- get
-     put $ oset sym val obarray
-     return  $ ExprInt 0
-evalList (ExprSymbol "set") _ = genericError
+evalList (ExprSymbol "setq") [ExprSymbol sym, val] =
+  do (buf, obarray) <- get
+     val <- evalExpr val
+     put (buf, oset sym val obarray)
+     return nil
+
+evalList (ExprSymbol "intern") [ExprString name] =
+  return $ ExprSymbol name
 
 evalList (ExprSymbol "progn") args = evalMultiExpr args
 
 -- Primitive functions.
 evalList (ExprSymbol "not") [arg] =
+  do arg <- evalExpr arg
+     primNot arg
+
+evalList (ExprSymbol "car") [arg] =
+  do val <- evalExpr arg
+     case val of
+       ExprList lst -> 
+         case length lst of
+           0 -> return $ ExprList []
+           _ -> return $ head lst
+       _ -> throwCurrentForm "Wrong type argument"
+
+evalList (ExprSymbol "cdr") [arg] =
+  do val <- evalExpr arg
+     case val of
+       ExprList lst -> 
+         case length lst of
+           0 -> return $ ExprList []
+           _ -> return $ ExprList (tail lst)
+       _ -> throwCurrentForm "Wrong type argument"
+
+evalList (ExprSymbol "listp") [arg] =
+  do val <- evalExpr arg
+     case val of
+       ExprList _ -> return $ ExprBool True
+       _ -> return $ ExprBool False
+
+evalList (ExprSymbol "list") args = fmap ExprList $ mapM evalExpr args
+
+evalList (ExprSymbol "quote") args =
+  case length args of
+    0 -> genericError
+    1 -> return $ head args
+    _ -> return $ ExprList args
+
+evalList (ExprSymbol "insert") [arg] =
   do arg' <- evalExpr arg
-     primNot arg'
-evalList (ExprSymbol "not") _ = genericError
+     ((body, pos), ob) <- get
+     case arg' of
+       ExprString txt ->
+         do put ((insert body pos txt, pos + length txt), ob)
+            return arg'
+       _ -> throwCurrentForm "Wrong type argument"
+
+evalList (ExprSymbol "goto") [arg] =
+  do arg' <- evalExpr arg
+     case arg' of
+       ExprInt delta ->
+         do ((body, pos), ob) <- get
+            put ((body, pos + delta), ob)
+            return arg'
+       _ -> throwCurrentForm "Wrong type argument"
+
+evalList (ExprSymbol "delete") [arg] =
+  do arg' <- evalExpr arg
+     case arg' of
+       ExprInt len ->
+         do ((body, pos), ob) <- get
+            put ((delete body pos len, pos - len), ob)
+            return arg'
+       _ -> throwCurrentForm "Wrong type argument"
+
+evalList (ExprSymbol "point") [] =
+  do ((body, pos), ob) <- get
+     return $ ExprInt pos
+
+evalList (ExprSymbol "buffer-string") [] =
+  do ((body, pos), ob) <- get
+     return $ ExprString body
 
 evalList (ExprSymbol sym) args =
   case M.lookup sym bopPrimitives of
@@ -224,44 +315,48 @@ evalList (ExprSymbol sym) args =
       where fn a b = do a' <- evalExpr a
                         b' <- evalExpr b
                         bop a' b'
-    
 
 -- User defined functions.
 evalList (ExprList ((ExprSymbol "lambda")
                      : (ExprList params : body))) args =
   if (length params) /= (length args)
   then throwCurrentForm "Wrong number of arguments"
-  else evalExpr letForm
-  where fn (sym, val) = ExprList [sym, val]
-        bindings = ExprList (map fn (zip params args))
-        letForm = ExprList $ ExprSymbol "let" : (bindings : body)
+  else
+    do (buf, obarray) <- get
+       bds <- let bindingToList (ExprSymbol sym, val) =
+                    do val <- evalExpr val
+                       return (sym, val)
+                  bindingToList _ =
+                    throwError (ExprList params, "Invalid parameter") in
+                fmap M.fromList $ mapM bindingToList $ zip params args
+       put (buf, bds : obarray)
+       val <- evalMultiExpr body
+       (buf, obarray) <- get
+       put (buf, tail obarray)
+       return val
 
 evalList _ _ = undefined
-          
-
-eval1 :: String -> String
-eval1 program =
-  let expr = parseString exprP program in
-    case expr of
-      Left err -> show err
-      Right exp ->
-        case runExcept (evalStateT (evalExpr exp) initialObarray) of
-          Left (exp, err) -> err ++ ": " ++ prin1 exp
-          Right exp -> prin1 exp
 
 eval :: String -> String
 eval program =
-  let exprList = parseString multiExprP program in
-    case exprList of
+  let expr = parseString multiExprP program in
+    case expr of
       Left err -> show err
-      Right exp ->
-        case runExcept (evalStateT (evalMultiExpr exp) initialObarray) of
+      Right exp -> 
+        case runExcept (evalStateT (evalMultiExpr exp) initialWorld) of
           Left (exp, err) -> err ++ ": " ++ prin1 exp
           Right exp -> prin1 exp
 
+evalS :: World -> String ->
+  Either (Expression, String) (Expression, World)
+evalS world program =
+  let expr = parseString multiExprP program in
+    case expr of
+      Left err -> throwError (nil, show err)
+      Right exp -> 
+        runExcept (runStateT (evalMultiExpr exp) world)
+
 evalFile :: String -> IO String
 evalFile file =
-  do handle <- openFile file ReadMode
-     contents <- hGetContents handle
+  do contents <- readFile file
      return $ eval contents
-

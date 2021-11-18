@@ -1,2 +1,17 @@
-(set x 1)
-x
+(setq fib 
+      (lambda (a b n)
+        (if (= n 0)
+            (+ a b)
+          (+ a (fib b (+ a b) (- n 1))))))
+
+(setq assq
+      (lambda (key lst)
+        (if (= lst ())
+            ()
+          (if (= key (car (car lst)))
+              (car lst)
+            (assq key (cdr lst))))))
+
+(setq caar (lambda (x) (car (car x))))
+(setq cadr (lambda (x) (car (cdr x))))
+(setq cddr (lambda (x) (cdr (cdr x))))
