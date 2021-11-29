@@ -15,3 +15,213 @@
 (setq caar (lambda (x) (car (car x))))
 (setq cadr (lambda (x) (car (cdr x))))
 (setq cddr (lambda (x) (cdr (cdr x))))
+
+(setq remove
+      (lambda (elm lst)
+        (if (= lst ())
+            lst
+          (let ((head (car lst))
+                (tail (cdr lst)))
+            (if (= elm head)
+                (remove elm tail)
+              (append (list head) (remove elm tail)))))))
+
+(setq assq-set
+      (lambda (key lst new-val)
+        (let ((old-val (assq key lst)))
+          (if (= old-val ())
+              (append (list (list key new-val)) lst)
+            (append (list (list key new-val)) (remove old-val lst))))))
+
+(setq buffer-list '(("main" ("" 0))
+                    ("mini" ("" 0))))
+
+(setq current-buffer-name "main")
+
+(setq switch-to-buffer
+      (lambda (buf)
+        (setq current-buffer-name buf)))
+
+(setq current-buffer
+      (lambda ()
+        (cadr (assq current-buffer-name buffer-list))))
+
+(setq point
+      (lambda ()
+        (cadr (current-buffer))))
+
+(setq buffer-string
+      (lambda ()
+        (car (current-buffer))))
+
+(setq insert
+      (lambda (str)
+        (let ((body (buffer-string))
+              (p (point)))
+          (let ((new-body (append (take p body)
+                                  (append str (drop p body))))
+                (new-p (+ p (length str))))
+            (setq buffer-list
+                  (assq-set current-buffer-name buffer-list
+                            (list new-body new-p)))))))
+
+(setq delete
+      (lambda (len)
+        (let ((body (buffer-string))
+              (p (point)))
+          (let ((new-body (append (take (- p len) body)
+                                  (drop p body)))
+                (new-p (- p len)))
+            (setq buffer-list
+                  (assq-set current-buffer-name buffer-list
+                            (list new-body new-p)))))))
+
+(setq goto
+      (lambda (p)
+        (setq buffer-list
+              (assq-set current-buffer-name buffer-list
+                        (list (buffer-string) p)))))
+
+(setq erase-buffer
+      (lambda ()
+        (setq buffer-list
+              (assq-set current-buffer-name buffer-list
+                        (list "" (point))))))
+
+(setq functionp
+      (lambda (obj)
+        (or (symbolp obj)
+            (if (listp obj)
+                (= (car obj) 'lambda)
+              false))))
+
+(setq run-command
+      (lambda (key)
+        (let ((val (cadr (assq key current-map))))
+          (if (functionp val)
+              (progn (setq current-map global-map)
+                     (funcall val))
+            (if (not (= val ()))
+                (setq current-map val)
+              ())))))
+
+(setq message
+      (lambda (str)
+        (let ((old-buf current-buffer-nam))
+          (switch-to-buffer "mini")
+          (erase-buffer)
+          (insert str)
+          (switch-to-buffer old-buf))))
+
+(setq minibuffer-content
+      (lambda ()
+        (car (cadr (assq "mini" buffer-list)))))
+
+(setq point-min (lambda () 0))
+(setq point-max (lambda () (length (buffer-string))))
+
+(setq nth
+      (lambda (idx obj)
+        (car (take 1 (drop idx obj)))))
+
+(setq before-point
+      (lambda () (nth (- (point) 1) (buffer-string))))
+
+(setq forward-char
+      (lambda ()
+        (goto (min (point-max) (+ (point) 1)))))
+
+(setq backward-char
+      (lambda ()
+        (goto (max 0 (- (point) 1)))))
+
+(setq search-forward
+      (lambda (char)
+        (if (= char (before-point))
+            (progn (forward-char)
+                   true)
+          (if (= (point) (point-max))
+              false
+            (progn (forward-char)
+                   (search-forward char))))))
+
+(setq search-backward
+      (lambda (char)
+        (if (= char (before-point))
+            (progn (backward-char)
+                   true)
+          (if (= (point) (point-min))
+              false
+            (progn (backward-char)
+                   (search-backward char))))))
+
+(setq global-map
+      '(("C-f" forward-char)
+        ("C-b" backward-char)
+        ("DEL" (lambda () (delete 1)))
+        ("RET" (lambda () (insert "
+")))
+        ("C-n" (lambda () (search-forward "
+")))
+        ("C-p" (lambda () (search-backward "
+")))
+        ("A" (lambda () (insert "A")))
+        ("B" (lambda () (insert "B")))
+        ("C" (lambda () (insert "C")))
+        ("D" (lambda () (insert "D")))
+        ("E" (lambda () (insert "E")))
+        ("F" (lambda () (insert "F")))
+        ("G" (lambda () (insert "G")))
+        ("H" (lambda () (insert "H")))
+        ("I" (lambda () (insert "I")))
+        ("J" (lambda () (insert "J")))
+        ("K" (lambda () (insert "K")))
+        ("L" (lambda () (insert "L")))
+        ("M" (lambda () (insert "M")))
+        ("N" (lambda () (insert "N")))
+        ("O" (lambda () (insert "O")))
+        ("P" (lambda () (insert "P")))
+        ("Q" (lambda () (insert "Q")))
+        ("R" (lambda () (insert "R")))
+        ("S" (lambda () (insert "S")))
+        ("T" (lambda () (insert "T")))
+        ("U" (lambda () (insert "U")))
+        ("V" (lambda () (insert "V")))
+        ("W" (lambda () (insert "W")))
+        ("X" (lambda () (insert "X")))
+        ("Y" (lambda () (insert "Y")))
+        ("Z" (lambda () (insert "Z")))
+        ("a" (lambda () (insert "a")))
+        ("b" (lambda () (insert "b")))
+        ("c" (lambda () (insert "c")))
+        ("d" (lambda () (insert "d")))
+        ("e" (lambda () (insert "e")))
+        ("f" (lambda () (insert "f")))
+        ("g" (lambda () (insert "g")))
+        ("h" (lambda () (insert "h")))
+        ("i" (lambda () (insert "i")))
+        ("j" (lambda () (insert "j")))
+        ("k" (lambda () (insert "k")))
+        ("l" (lambda () (insert "l")))
+        ("m" (lambda () (insert "m")))
+        ("n" (lambda () (insert "n")))
+        ("o" (lambda () (insert "o")))
+        ("p" (lambda () (insert "p")))
+        ("q" (lambda () (insert "q")))
+        ("r" (lambda () (insert "r")))
+        ("s" (lambda () (insert "s")))
+        ("t" (lambda () (insert "t")))
+        ("u" (lambda () (insert "u")))
+        ("v" (lambda () (insert "v")))
+        ("w" (lambda () (insert "w")))
+        ("x" (lambda () (insert "x")))
+        ("y" (lambda () (insert "y")))
+        ("z" (lambda () (insert "z")))
+        ("[" (lambda () (insert "[")))
+        ("]" (lambda () (insert "]")))
+        ("^" (lambda () (insert "^")))
+        ("_" (lambda () (insert "_")))
+        ("`" (lambda () (insert "`")))
+        ))
+
+(setq current-map global-map)

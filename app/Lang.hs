@@ -8,6 +8,7 @@ import Control.Monad
 import Debug.Trace (trace)
 import Control.Monad.Except
 import System.IO
+import Text.Printf
 
 data Expression
    = ExprSymbol Symbol
@@ -23,12 +24,10 @@ type Obarray = [M.Map Symbol Expression]
 
 type Buffer = (String, Int)
 
-type World = (Buffer, Obarray)
-
 type Error = (Expression, String)
 
 type StateExcept e s a = StateT s (Except e) a
-type ExpressionS = StateExcept (Expression, String) World Expression
+type ExpressionS = StateExcept (Expression, String) Obarray Expression
 
 -- Print
 
@@ -62,19 +61,18 @@ oset sym val (this : rest) =
     Nothing -> this : oset sym val rest
     Just _ -> M.adjust (const val) sym this : rest
 
-initialWorld :: World
-initialWorld = (("", 0), [M.empty])
+initialObarray :: Obarray
+initialObarray = [M.empty]
 
 --- Error
 
 throwCurrentForm :: String -> ExpressionS
-throwCurrentForm msg = do (buf, obarray) <- get
+throwCurrentForm msg = do obarray <- get
                           form <- olookup "__current-form" obarray
                           throwError (form, msg)
 
 genericError :: ExpressionS
 genericError = throwCurrentForm "Malformed expression"
-
 
 --- Primitive bop
   
@@ -100,6 +98,10 @@ primAnd (ExprBool a) (ExprBool b) = return $ ExprBool (a && b)
 primAnd _ _ = genericError
 primOr (ExprBool a) (ExprBool b) = return $ ExprBool (a || b)
 primOr _ _ = genericError
+primMax (ExprInt a) (ExprInt b) = return $ ExprInt (max a b)
+primMax _ _ = genericError
+primMin (ExprInt a) (ExprInt b) = return $ ExprInt (min a b)
+primMin _ _ = genericError
 primNot (ExprBool a) = return $ ExprBool (not a)
 primNot _ = genericError
 
@@ -115,13 +117,19 @@ bopPrimitives = M.fromList [("+", primAdd),
                             (">=", primGe),
                             ("<=", primLe),
                             ("and", primAnd),
-                            ("or", primOr)]
+                            ("or", primOr),
+                            ("max", primMax),
+                            ("min", primMin)]
+
+primitiveFunctions :: [Symbol]
+primitiveFunctions =
+  ["not", "car", "cdr", "list", "listp", "symbolp",
+   "take", "drop", "append", "length"]
 
 primitives :: [Symbol]
-primitives = ["if", "let", "setq", "not", "progn",
-              "car", "cdr", "list", "quote", "insert", "delete",
-              "goto", "point", "buffer-string"]
-             ++ M.keys bopPrimitives
+primitives = ["if", "let", "setq", "progn", "quote", "intern",
+              "funcall"]
+             ++ primitiveFunctions ++ M.keys bopPrimitives
 
 
 --- Buffer
@@ -145,7 +153,7 @@ symbolP = fmap ExprSymbol (spaces >> many1
 stringP :: Parser Expression
 stringP = do spaces
              char '"'
-             str <- many1 (noneOf "\"")
+             str <- many (noneOf "\"")
              char '"'
              return $ ExprString str
 
@@ -189,8 +197,8 @@ evalExpr v@(ExprList []) = return v
 evalExpr v@(ExprList ((ExprSymbol "lambda") : _)) = return v
 evalExpr v@(ExprList (fn : args)) =
   do fn <- evalExpr fn
-     (buf, obarray) <- get
-     put (buf, oset "__current-form" v obarray)
+     obarray <- get
+     put (oset "__current-form" v obarray)
      evalList fn args
 evalExpr v@(ExprInt _) = return v
 evalExpr v@(ExprBool _) = return v
@@ -198,7 +206,7 @@ evalExpr v@(ExprString _) = return v
 evalExpr v@(ExprSymbol sym) =
   if elem sym primitives
   then return v
-  else do (buf, obarray) <- get
+  else do obarray <- get
           olookup sym obarray
 
 evalMultiExpr :: [Expression] -> ExpressionS
@@ -207,16 +215,16 @@ evalMultiExpr exprs = fmap last (mapM evalExpr exprs)
 evalList :: Expression -> [Expression] -> ExpressionS
 
 evalList (ExprSymbol "let") ((ExprList bindings) : body) =
-  do (buf, obarray) <- get
+  do obarray <- get
      bds <- let bindingToList (ExprList [ExprSymbol sym, val]) =
                   do val <- evalExpr val
                      return (sym, val)
                 bindingToList v = throwError (v, "Invalid binding") in
               fmap M.fromList $ mapM bindingToList bindings
-     put (buf, (trace (show bds) bds) : obarray)
+     put (bds : obarray)
      val <- evalMultiExpr body
-     (buf, obarray) <- get
-     put (buf, tail obarray)
+     obarray <- get
+     put (tail obarray)
      return val
 
 evalList (ExprSymbol "if") [condition, caseThen, caseElse] =
@@ -226,46 +234,15 @@ evalList (ExprSymbol "if") [condition, caseThen, caseElse] =
        else evalExpr caseThen
 
 evalList (ExprSymbol "setq") [ExprSymbol sym, val] =
-  do (buf, obarray) <- get
+  do obarray <- get
      val <- evalExpr val
-     put (buf, oset sym val obarray)
-     return nil
+     put (oset sym val obarray)
+     return val
 
 evalList (ExprSymbol "intern") [ExprString name] =
   return $ ExprSymbol name
 
 evalList (ExprSymbol "progn") args = evalMultiExpr args
-
--- Primitive functions.
-evalList (ExprSymbol "not") [arg] =
-  do arg <- evalExpr arg
-     primNot arg
-
-evalList (ExprSymbol "car") [arg] =
-  do val <- evalExpr arg
-     case val of
-       ExprList lst -> 
-         case length lst of
-           0 -> return $ ExprList []
-           _ -> return $ head lst
-       _ -> throwCurrentForm "Wrong type argument"
-
-evalList (ExprSymbol "cdr") [arg] =
-  do val <- evalExpr arg
-     case val of
-       ExprList lst -> 
-         case length lst of
-           0 -> return $ ExprList []
-           _ -> return $ ExprList (tail lst)
-       _ -> throwCurrentForm "Wrong type argument"
-
-evalList (ExprSymbol "listp") [arg] =
-  do val <- evalExpr arg
-     case val of
-       ExprList _ -> return $ ExprBool True
-       _ -> return $ ExprBool False
-
-evalList (ExprSymbol "list") args = fmap ExprList $ mapM evalExpr args
 
 evalList (ExprSymbol "quote") args =
   case length args of
@@ -273,44 +250,18 @@ evalList (ExprSymbol "quote") args =
     1 -> return $ head args
     _ -> return $ ExprList args
 
-evalList (ExprSymbol "insert") [arg] =
-  do arg' <- evalExpr arg
-     ((body, pos), ob) <- get
-     case arg' of
-       ExprString txt ->
-         do put ((insert body pos txt, pos + length txt), ob)
-            return arg'
-       _ -> throwCurrentForm "Wrong type argument"
-
-evalList (ExprSymbol "goto") [arg] =
-  do arg' <- evalExpr arg
-     case arg' of
-       ExprInt delta ->
-         do ((body, pos), ob) <- get
-            put ((body, pos + delta), ob)
-            return arg'
-       _ -> throwCurrentForm "Wrong type argument"
-
-evalList (ExprSymbol "delete") [arg] =
-  do arg' <- evalExpr arg
-     case arg' of
-       ExprInt len ->
-         do ((body, pos), ob) <- get
-            put ((delete body pos len, pos - len), ob)
-            return arg'
-       _ -> throwCurrentForm "Wrong type argument"
-
-evalList (ExprSymbol "point") [] =
-  do ((body, pos), ob) <- get
-     return $ ExprInt pos
-
-evalList (ExprSymbol "buffer-string") [] =
-  do ((body, pos), ob) <- get
-     return $ ExprString body
+evalList (ExprSymbol "funcall") (fn : args) =
+  do fn' <- evalExpr fn
+     evalList fn' args
 
 evalList (ExprSymbol sym) args =
   case M.lookup sym bopPrimitives of
-    Nothing -> undefined -- Shouldn’t happen.
+    Nothing ->
+      if elem sym primitiveFunctions
+      then do args' <- mapM evalExpr args
+              evalPrimFunction sym args'
+      else do fn <- evalExpr (ExprSymbol sym)
+              evalList fn args
     Just bop -> foldM fn (head args) (tail args)
       where fn a b = do a' <- evalExpr a
                         b' <- evalExpr b
@@ -322,20 +273,87 @@ evalList (ExprList ((ExprSymbol "lambda")
   if (length params) /= (length args)
   then throwCurrentForm "Wrong number of arguments"
   else
-    do (buf, obarray) <- get
+    do obarray <- get
        bds <- let bindingToList (ExprSymbol sym, val) =
                     do val <- evalExpr val
                        return (sym, val)
                   bindingToList _ =
                     throwError (ExprList params, "Invalid parameter") in
                 fmap M.fromList $ mapM bindingToList $ zip params args
-       put (buf, bds : obarray)
+       put (bds : obarray)
        val <- evalMultiExpr body
-       (buf, obarray) <- get
-       put (buf, tail obarray)
+       obarray <- get
+       put (tail obarray)
        return val
 
-evalList _ _ = undefined
+evalList fn _ = throwCurrentForm "Invalid function"
+
+evalPrimFunction :: Symbol -> [Expression] -> ExpressionS
+
+evalPrimFunction "not" [arg] = primNot arg
+
+evalPrimFunction "not" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "car" [ExprList lst] =
+  case length lst of
+    0 -> return $ ExprList []
+    _ -> return $ head lst
+evalPrimFunction "car" [ExprString str] =
+  case length str of
+    0 -> return $ ExprString ""
+    _ -> return $ ExprString [head str]
+evalPrimFunction "car" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "cdr" [ExprList lst] =
+  case length lst of
+           0 -> return $ ExprList []
+           _ -> return $ ExprList (tail lst)
+evalPrimFunction "cdr" [ExprString str] =
+  case length str of
+           0 -> return $ ExprString ""
+           _ -> return $ ExprString (tail str)
+evalPrimFunction "cdr" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "symbolp" [arg] =
+  case arg of
+    ExprSymbol _ -> return $ ExprBool True
+    _ -> return $ ExprBool False
+    
+evalPrimFunction "listp" [arg] =
+  case arg of
+    ExprList _ -> return $ ExprBool True
+    _ -> return $ ExprBool False
+
+evalPrimFunction "list" args = return $ ExprList args
+evalPrimFunction "list" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "append" [ExprList l1, ExprList l2] =
+  return $ ExprList (l1 ++ l2)
+evalPrimFunction "append" [ExprString s1, ExprString s2] =
+  return $ ExprString (s1 ++ s2)  
+evalPrimFunction "append" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "take" [ExprInt n, ExprString str] =
+  return $ ExprString (take n str)
+evalPrimFunction "take" [ExprInt n, ExprList lst] =
+  return $ ExprList (take n lst)
+evalPrimFunction "take" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "drop" [ExprInt n, ExprString str] =
+  return $ ExprString (drop n str)
+evalPrimFunction "drop" [ExprInt n, ExprList lst] =
+  return $ ExprList (drop n lst)
+evalPrimFunction "drop" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "length" [ExprList lst] =
+  return $ ExprInt (length lst)
+evalPrimFunction "length" [ExprString str] =
+  return $ ExprInt (length str)
+evalPrimFunction "length" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction _ _ = undefined
+
+--- Eval
 
 eval :: String -> String
 eval program =
@@ -343,20 +361,32 @@ eval program =
     case expr of
       Left err -> show err
       Right exp -> 
-        case runExcept (evalStateT (evalMultiExpr exp) initialWorld) of
+        case runExcept (evalStateT (evalMultiExpr exp) initialObarray) of
           Left (exp, err) -> err ++ ": " ++ prin1 exp
           Right exp -> prin1 exp
 
-evalS :: World -> String ->
-  Either (Expression, String) (Expression, World)
-evalS world program =
+evalS :: Obarray -> String ->
+  Either (Expression, String) (Expression, Obarray)
+evalS obarray program =
   let expr = parseString multiExprP program in
     case expr of
       Left err -> throwError (nil, show err)
       Right exp -> 
-        runExcept (runStateT (evalMultiExpr exp) world)
+        runExcept (runStateT (evalMultiExpr exp) obarray)
 
 evalFile :: String -> IO String
 evalFile file =
   do contents <- readFile file
      return $ eval contents
+
+evalFileS :: String
+  -> IO (Either (Expression, String) (Expression, Obarray))
+evalFileS file =
+  do contents <- readFile file
+     return $ evalS initialObarray contents
+
+evalInit :: String -> String -> IO String
+evalInit file program =
+  do contents <- readFile file
+     return $ eval (contents ++ " " ++ program)
+     
