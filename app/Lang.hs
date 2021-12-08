@@ -62,13 +62,13 @@ oset sym val (this : rest) =
     Just _ -> M.adjust (const val) sym this : rest
 
 initialObarray :: Obarray
-initialObarray = [M.empty]
+initialObarray = [M.fromList [("__stackframe", nil)]]
 
 --- Error
 
 throwCurrentForm :: String -> ExpressionS
 throwCurrentForm msg = do obarray <- get
-                          form <- olookup "__current-form" obarray
+                          form <- olookup "__stackframe" obarray
                           throwError (form, msg)
 
 genericError :: ExpressionS
@@ -124,7 +124,7 @@ bopPrimitives = M.fromList [("+", primAdd),
 primitiveFunctions :: [Symbol]
 primitiveFunctions =
   ["not", "car", "cdr", "list", "listp", "symbolp",
-   "take", "drop", "append", "length"]
+   "take", "drop", "append", "length", "eval-string"]
 
 primitives :: [Symbol]
 primitives = ["if", "let", "setq", "progn", "quote", "intern",
@@ -150,12 +150,24 @@ symbolP = fmap ExprSymbol (spaces >> many1
                            (letter <|> digit
                             <|> oneOf "!@#$%^&*_+-=<>?/|~`"))
 
+escapeP :: Parser String
+escapeP = do slash <- char '\\'
+             code <- oneOf "\"\\n"
+             return $ case code of
+               'n' -> "\n"
+               't' -> "\t"
+               _ -> [code]
+
+notEscapeP :: Parser String
+notEscapeP = do ch <- noneOf "\""
+                return [ch]
+
 stringP :: Parser Expression
 stringP = do spaces
              char '"'
-             str <- many (noneOf "\"")
+             str <- many (escapeP <|> notEscapeP)
              char '"'
-             return $ ExprString str
+             return $ ExprString (concat str)
 
 boolP :: Parser Expression
 boolP = try (spaces >> string "true" >> return (ExprBool True))
@@ -198,7 +210,11 @@ evalExpr v@(ExprList ((ExprSymbol "lambda") : _)) = return v
 evalExpr v@(ExprList (fn : args)) =
   do fn <- evalExpr fn
      obarray <- get
-     put (oset "__current-form" v obarray)
+     stackframe <- olookup "__stackframe" obarray
+     case stackframe of
+       ExprList stack ->
+         put $ oset "__stackframe" (ExprList (v:stack)) obarray
+       _ -> throwError (nil, "__stackframe is not a list")
      evalList fn args
 evalExpr v@(ExprInt _) = return v
 evalExpr v@(ExprBool _) = return v
@@ -350,6 +366,13 @@ evalPrimFunction "length" [ExprList lst] =
 evalPrimFunction "length" [ExprString str] =
   return $ ExprInt (length str)
 evalPrimFunction "length" _ = throwCurrentForm "Wrong type argument"
+
+evalPrimFunction "eval-string" [ExprString string] =
+  let expr = parseString multiExprP string in
+    case expr of
+      Left err -> throwError (nil, show err)
+      Right exp -> evalMultiExpr exp
+evalPrimFunction "eval-string" _ = throwCurrentForm "Wrong type argument"
 
 evalPrimFunction _ _ = undefined
 

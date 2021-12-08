@@ -16,6 +16,9 @@
 (setq cadr (lambda (x) (car (cdr x))))
 (setq cddr (lambda (x) (cdr (cdr x))))
 
+(setq max (lambda (a b) (if (> a b) a b)))
+(setq min (lambda (a b) (if (> a b) b a)))
+
 (setq remove
       (lambda (elm lst)
         (if (= lst ())
@@ -33,7 +36,7 @@
               (append (list (list key new-val)) lst)
             (append (list (list key new-val)) (remove old-val lst))))))
 
-(setq buffer-list '(("main" ("" 0))
+(setq buffer-list '(("main" ("Hello world" 0))
                     ("mini" ("" 0))))
 
 (setq current-buffer-name "main")
@@ -71,12 +74,12 @@
               (p (point)))
           (let ((new-body (append (take (- p len) body)
                                   (drop p body)))
-                (new-p (- p len)))
+                (new-p (max 0 (- p len))))
             (setq buffer-list
                   (assq-set current-buffer-name buffer-list
                             (list new-body new-p)))))))
 
-(setq goto
+(setq goto-char
       (lambda (p)
         (setq buffer-list
               (assq-set current-buffer-name buffer-list
@@ -95,15 +98,26 @@
                 (= (car obj) 'lambda)
               false))))
 
+(setq minibuffer-active-p 'false)
+
 (setq run-command
       (lambda (key)
-        (let ((val (cadr (assq key current-map))))
+        (setq __stackframe ())
+        (let ((val (cadr (assq key current-map)))
+              (buf current-buffer-name)
+              (work-buf (if (= minibuffer-active-p 'true)
+                            "mini"
+                          current-buffer-name)))
+          (switch-to-buffer work-buf)
           (if (functionp val)
               (progn (setq current-map global-map)
                      (funcall val))
             (if (not (= val ()))
-                (setq current-map val)
-              ())))))
+                (progn
+                  (setq top-level-map current-map)
+                  (setq current-map val))
+              (insert key)))
+          (switch-to-buffer buf))))
 
 (setq message
       (lambda (str)
@@ -124,104 +138,110 @@
       (lambda (idx obj)
         (car (take 1 (drop idx obj)))))
 
-(setq before-point
-      (lambda () (nth (- (point) 1) (buffer-string))))
+(setq char-before
+      (lambda ()
+        (if (= (point) (point-min))
+            ()
+          (nth (- (point) 1) (buffer-string)))))
+
+(setq char-after
+      (lambda ()
+        (if (= (point) (point-max))
+            ()
+          (nth (point) (buffer-string)))))
 
 (setq forward-char
-      (lambda ()
-        (goto (min (point-max) (+ (point) 1)))))
+      (lambda (n)
+        (goto-char (min (point-max) (+ (point) n)))))
 
 (setq backward-char
-      (lambda ()
-        (goto (max 0 (- (point) 1)))))
+      (lambda (n)
+        (goto-char (max 0 (- (point) n)))))
 
 (setq search-forward
       (lambda (char)
-        (if (= char (before-point))
-            (progn (forward-char)
-                   true)
+        (if (= char (char-after))
+            true
           (if (= (point) (point-max))
               false
-            (progn (forward-char)
+            (progn (forward-char 1)
                    (search-forward char))))))
 
 (setq search-backward
       (lambda (char)
-        (if (= char (before-point))
-            (progn (backward-char)
-                   true)
+        (if (= char (char-before))
+            true
           (if (= (point) (point-min))
               false
-            (progn (backward-char)
+            (progn (backward-char 1)
                    (search-backward char))))))
 
+(setq save-excursion
+      (lambda (fn)
+        (let ((p (point)))
+          (let ((ret (funcall fn)))
+            (goto-char p)
+            ret))))
+
+(setq current-column
+      (lambda ()
+        (save-excursion
+          (lambda ()
+            (let ((start (point)))
+              (search-backward "\n")
+              (- start (point)))))))
+
+(setq end-of-line
+      (lambda ()
+        (save-excursion
+          (lambda ()
+            (if (= (char-after) "\n")
+                (point)
+              (progn (search-forward "\n")
+                     (point)))))))
+
+(setq beginning-of-line
+      (lambda ()
+        (save-excursion
+          (lambda ()
+            (if (= (char-before) "\n")
+                (point)
+              (progn (search-backward "\n")
+                     (point)))))))
+
+(setq line-beginning
+      (lambda ()
+        (search-backward "\n")))
+
+(setq line-end
+      (lambda ()
+        (search-forward "\n")))
+
+(setq forward-line
+      (lambda ()
+        (let ((col (current-column)))
+          (search-forward "\n")
+          (forward-char 1)
+          (forward-char (min (- (end-of-line) (point)) col)))))
+
+(setq backward-line
+      (lambda ()
+        (let ((col (current-column)))
+          (search-backward "\n")
+          (backward-char 1)
+          (search-backward "\n")
+          (forward-char (min (- (end-of-line) (point)) col)))))
+
 (setq global-map
-      '(("C-f" forward-char)
-        ("C-b" backward-char)
+      '(("C-f" (lambda () (forward-char 1)))
+        ("C-b" (lambda () (backward-char 1)))
         ("DEL" (lambda () (delete 1)))
-        ("RET" (lambda () (insert "
-")))
-        ("C-n" (lambda () (search-forward "
-")))
-        ("C-p" (lambda () (search-backward "
-")))
-        ("A" (lambda () (insert "A")))
-        ("B" (lambda () (insert "B")))
-        ("C" (lambda () (insert "C")))
-        ("D" (lambda () (insert "D")))
-        ("E" (lambda () (insert "E")))
-        ("F" (lambda () (insert "F")))
-        ("G" (lambda () (insert "G")))
-        ("H" (lambda () (insert "H")))
-        ("I" (lambda () (insert "I")))
-        ("J" (lambda () (insert "J")))
-        ("K" (lambda () (insert "K")))
-        ("L" (lambda () (insert "L")))
-        ("M" (lambda () (insert "M")))
-        ("N" (lambda () (insert "N")))
-        ("O" (lambda () (insert "O")))
-        ("P" (lambda () (insert "P")))
-        ("Q" (lambda () (insert "Q")))
-        ("R" (lambda () (insert "R")))
-        ("S" (lambda () (insert "S")))
-        ("T" (lambda () (insert "T")))
-        ("U" (lambda () (insert "U")))
-        ("V" (lambda () (insert "V")))
-        ("W" (lambda () (insert "W")))
-        ("X" (lambda () (insert "X")))
-        ("Y" (lambda () (insert "Y")))
-        ("Z" (lambda () (insert "Z")))
-        ("a" (lambda () (insert "a")))
-        ("b" (lambda () (insert "b")))
-        ("c" (lambda () (insert "c")))
-        ("d" (lambda () (insert "d")))
-        ("e" (lambda () (insert "e")))
-        ("f" (lambda () (insert "f")))
-        ("g" (lambda () (insert "g")))
-        ("h" (lambda () (insert "h")))
-        ("i" (lambda () (insert "i")))
-        ("j" (lambda () (insert "j")))
-        ("k" (lambda () (insert "k")))
-        ("l" (lambda () (insert "l")))
-        ("m" (lambda () (insert "m")))
-        ("n" (lambda () (insert "n")))
-        ("o" (lambda () (insert "o")))
-        ("p" (lambda () (insert "p")))
-        ("q" (lambda () (insert "q")))
-        ("r" (lambda () (insert "r")))
-        ("s" (lambda () (insert "s")))
-        ("t" (lambda () (insert "t")))
-        ("u" (lambda () (insert "u")))
-        ("v" (lambda () (insert "v")))
-        ("w" (lambda () (insert "w")))
-        ("x" (lambda () (insert "x")))
-        ("y" (lambda () (insert "y")))
-        ("z" (lambda () (insert "z")))
-        ("[" (lambda () (insert "[")))
-        ("]" (lambda () (insert "]")))
-        ("^" (lambda () (insert "^")))
-        ("_" (lambda () (insert "_")))
-        ("`" (lambda () (insert "`")))
-        ))
+        ("RET" (lambda () (insert "\n")))
+        ("C-n" forward-line)
+        ("C-p" backward-line)
+        ("C-x" (("C-c" (lambda () (quote halt)))))
+        ("C-a" line-beginning)
+        ("C-e" line-end)))
 
 (setq current-map global-map)
+(setq top-level-map ())

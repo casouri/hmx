@@ -8,7 +8,7 @@ import Brick.Types
 import Brick.Widgets.Core
 import qualified Graphics.Vty as V
 import qualified Data.Map as M
-import Data.List (sort)
+import Data.List (sort, intersperse)
 import Lang as L
 
 data Name = ViewportMain
@@ -34,14 +34,12 @@ cursorPos s p = Location (col, row)
   where pred '\n' = True
         pred _ = False
         row = length $ filter pred $ take p s
-        lastNewline pos str =
-          if pos < length str
-          then case pos of
-                 pos | pos <= 0 -> 0
-                 pos | str !! pos == '\n' -> pos + 1
-                 _ -> lastNewline (pos - 1) str
-          else lastNewline (pos - 1) str
-        col = p - lastNewline (p-1) s
+        lastNewlinePos pos str =
+          -- POS cannot be greater than buffer length.
+          if pos < 0 || (str !! pos == '\n')
+          then pos + 1
+          else lastNewlinePos (pos - 1) str
+        col = p - lastNewlinePos (p-1) s
 
 drawWindow :: World -> Widget Name
 drawWindow (obarray, minibuffer) =
@@ -74,28 +72,35 @@ encodeKey (V.EvKey key modifiers) =
 encodeKey _ = "???"
 
 encodeKey' :: V.Key -> String
+encodeKey' (V.KChar '\\') = "\\\\"
+encodeKey' (V.KChar '"') = "\\\""
 encodeKey' (V.KChar char) = [char]
 encodeKey' V.KEnter = "RET"
 encodeKey' V.KEsc = "ESC"
 encodeKey' V.KBS = "DEL"
 encodeKey' _ = "???"
 
+printStack :: Expression -> String
+printStack (ExprList lst) = concat $ intersperse "\n"  $map prin1 lst
+printStack x = prin1 x
+
 handleEvent :: World -> BrickEvent Name e
   -> EventM Name (Next World)
-handleEvent w (VtyEvent (V.EvKey (V.KChar 'q') [])) = halt w
-handleEvent (obarray, minibuffer) (VtyEvent key) =
+handleEvent w (VtyEvent (V.EvKey (V.KChar 'q') [V.MCtrl])) = halt w
+handleEvent w@(obarray, minibuffer) (VtyEvent key) =
   let result = evalS obarray
-        ("(run-command " ++ "\"" ++ (encodeKey key) ++ "\"" ++ ")") in
+        ("(run-command " ++ "\"" ++ encodeKey key ++ "\"" ++ ")") in
     case result of
-      Left (exp, err) -> continue (obarray, err ++ ": " ++ prin1 exp)
+      Left (exp, err) -> continue (obarray, err ++ ": " ++ printStack exp)
+      Right (ExprSymbol "halt", _) -> halt w
       Right (exp, newObarray) -> continue (newObarray, encodeKey key)
 handleEvent w _ = continue w
 
 main :: IO ()
-main = do v <- L.evalFileS "init.hmx"
+main = do v <- L.evalFileS "setup.hmx"
           finalState <-
             case v of
-              Left (exp, err) -> putStrLn err
+              Left (exp, err) -> putStrLn (err ++ ": " ++ prin1 exp)
               Right (exp, obarray) ->
                 do finalState <- defaultMain app (obarray, "")
                    return ()
