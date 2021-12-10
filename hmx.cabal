@@ -24,14 +24,18 @@ source-repository head
   location: https://github.com/githubuser/proj
 
 library
+  exposed-modules:
+      Lang
   other-modules:
       Paths_hmx
   hs-source-dirs:
       src
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , brick
     , containers
+    , directory
     , mtl
     , parsec
     , regex-compat
@@ -42,15 +46,38 @@ library
 executable proj-exe
   main-is: Main.hs
   other-modules:
-      Lang
       Paths_hmx
   hs-source-dirs:
       app
   ghc-options: -threaded
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , brick
     , containers
+    , directory
+    , hmx
+    , mtl
+    , parsec
+    , regex-compat
+    , transformers
+    , vty
+  default-language: Haskell2010
+
+test-suite proj-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_hmx
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      QuickCheck
+    , base >=4.7 && <5
+    , brick
+    , containers
+    , directory
     , hmx
     , mtl
     , parsec

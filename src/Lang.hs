@@ -402,11 +402,11 @@ evalFile file =
   do contents <- readFile file
      return $ eval contents
 
-evalFileS :: String
+evalFileS :: String -> Obarray
   -> IO (Either (Expression, String) (Expression, Obarray))
-evalFileS file =
+evalFileS file ob =
   do contents <- readFile file
-     return $ evalS initialObarray contents
+     return $ evalS ob contents
 
 evalInit :: String -> String -> IO String
 evalInit file program =

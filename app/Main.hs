@@ -1,6 +1,7 @@
 module Main where
 
 import System.Environment
+import System.Directory
 import Text.Regex
 import Brick.AttrMap
 import Brick.Main
@@ -84,8 +85,7 @@ printStack :: Expression -> String
 printStack (ExprList lst) = concat $ intersperse "\n"  $map prin1 lst
 printStack x = prin1 x
 
-handleEvent :: World -> BrickEvent Name e
-  -> EventM Name (Next World)
+handleEvent :: World -> BrickEvent Name e -> EventM Name (Next World)
 handleEvent w (VtyEvent (V.EvKey (V.KChar 'q') [V.MCtrl])) = halt w
 handleEvent w@(obarray, minibuffer) (VtyEvent key) =
   let result = evalS obarray
@@ -97,12 +97,21 @@ handleEvent w@(obarray, minibuffer) (VtyEvent key) =
 handleEvent w _ = continue w
 
 main :: IO ()
-main = do v <- L.evalFileS "setup.hmx"
-          finalState <-
-            case v of
-              Left (exp, err) -> putStrLn (err ++ ": " ++ prin1 exp)
-              Right (exp, obarray) ->
-                do finalState <- defaultMain app (obarray, "")
-                   return ()
-          return ()
+main = do args <- getArgs
+          contents <- if length args == 1
+                      then readFile (head args)
+                      else return ""
+          v <- evalFileS "setup.hmx"
+               [M.fromList [("write-content", ExprString contents),
+                            ("__stackframe", nil)]]
+          case v of
+            Left (exp, err) -> putStrLn (err ++ ": " ++ prin1 exp)
+            Right (exp, obarray) ->
+              do (ob, mini) <- defaultMain app (obarray, "")
+                 case M.lookup "write-content" (head ob) of
+                   Just (ExprString str) ->
+                     if length args == 1
+                     then writeFile (head args) str
+                     else return ()
+                   _ -> return ()
           

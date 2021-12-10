@@ -36,7 +36,7 @@
               (append (list (list key new-val)) lst)
             (append (list (list key new-val)) (remove old-val lst))))))
 
-(setq buffer-list '(("main" ("Hello world" 0))
+(setq buffer-list '(("main" ("" 0))
                     ("mini" ("" 0))))
 
 (setq current-buffer-name "main")
@@ -103,21 +103,13 @@
 (setq run-command
       (lambda (key)
         (setq __stackframe ())
-        (let ((val (cadr (assq key current-map)))
-              (buf current-buffer-name)
-              (work-buf (if (= minibuffer-active-p 'true)
-                            "mini"
-                          current-buffer-name)))
-          (switch-to-buffer work-buf)
+        (let ((val (cadr (assq key current-map))))
           (if (functionp val)
               (progn (setq current-map global-map)
                      (funcall val))
             (if (not (= val ()))
-                (progn
-                  (setq top-level-map current-map)
-                  (setq current-map val))
-              (insert key)))
-          (switch-to-buffer buf))))
+                (setq current-map val)
+              (insert key))))))
 
 (setq message
       (lambda (str)
@@ -239,9 +231,11 @@
         ("RET" (lambda () (insert "\n")))
         ("C-n" forward-line)
         ("C-p" backward-line)
-        ("C-x" (("C-c" (lambda () (quote halt)))))
+        ("C-x" (("C-c" (lambda () 'halt))
+                ("C-s" (lambda ()
+                         (setq write-content (buffer-string))))))
         ("C-a" line-beginning)
         ("C-e" line-end)))
 
 (setq current-map global-map)
-(setq top-level-map ())
+(insert write-content)
